@@ -1,0 +1,1058 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Envboard</title>
+<meta name="description" content="A status board for pre-production environments: what is deployed where, who owns it, and whether it is safe to use.">
+<meta name="color-scheme" content="light dark">
+<style>
+/* Envboard: board + grouped table, with a JetBrains / TeamCity-flavoured frame. Sample data only. */
+:root{
+  --font:"Inter","JetBrains Sans","Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,sans-serif;
+  --mono:"JetBrains Mono","Cascadia Mono","Cascadia Code",Consolas,ui-monospace,monospace;
+  --ease:cubic-bezier(.22,1,.36,1);
+  --tile-w:148px;
+  --bg:#f4f5f7; --surface:#ffffff; --surface-2:#eff1f4; --hover:#f4f7fd; --sel:#e3ecfd;
+  --ink:#1f2024; --ink-2:#4a4d55; --ink-3:#6b6f78;
+  --line:#e4e6ea; --line-2:#cdd0d7;
+  --accent:#3574f0; --accent-ink:#2860d4;
+  --ok:#3fa75c; --ok-ink:#1d7a3b;
+  --warn:#d98a00; --warn-ink:#845000; --warn-bg:#fff3d6;
+  --crit:#d9363f; --crit-ink:#b01e29; --crit-bg:#fdecee;
+  --info:#3574f0;
+  --unk:#7d8088; --unk-bg:#eef0f3;
+  --bar:#27282c; --bar-line:#3a3c42; --bar-ink:#dfe1e5; --bar-ink-2:#a3a7af; --bar-field:#35373d;
+  --shadow:0 1px 2px rgba(0,0,0,.06),0 8px 24px rgba(0,0,0,.12);
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#1e1f22; --surface:#2b2d30; --surface-2:#35373c; --hover:#323438; --sel:#2e436e;
+    --ink:#dfe1e5; --ink-2:#b6bac1; --ink-3:#8c9098;
+    --line:#393b40; --line-2:#4e5157;
+    --accent:#548af7; --accent-ink:#7da7ff;
+    --ok:#5fb865; --ok-ink:#7fd08a;
+    --warn:#e0a21a; --warn-ink:#f2c25e; --warn-bg:#3a3018;
+    --crit:#e5555d; --crit-ink:#ff9097; --crit-bg:#3d2527;
+    --info:#548af7;
+    --unk:#8c9098; --unk-bg:#383a3f;
+    --bar:#18191b; --bar-line:#323438;
+    --shadow:0 8px 24px rgba(0,0,0,.5);
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#1e1f22; --surface:#2b2d30; --surface-2:#35373c; --hover:#323438; --sel:#2e436e;
+  --ink:#dfe1e5; --ink-2:#b6bac1; --ink-3:#8c9098;
+  --line:#393b40; --line-2:#4e5157;
+  --accent:#548af7; --accent-ink:#7da7ff;
+  --ok:#5fb865; --ok-ink:#7fd08a;
+  --warn:#e0a21a; --warn-ink:#f2c25e; --warn-bg:#3a3018;
+  --crit:#e5555d; --crit-ink:#ff9097; --crit-bg:#3d2527;
+  --info:#548af7;
+  --unk:#8c9098; --unk-bg:#383a3f;
+  --bar:#18191b; --bar-line:#323438;
+  --shadow:0 8px 24px rgba(0,0,0,.5);
+  color-scheme:dark;
+}
+
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{margin:0}
+body{background:var(--bg);color:var(--ink);font:13px/20px var(--font);-webkit-font-smoothing:antialiased}
+button,select{font:inherit;color:inherit}
+button{background:none;border:0;padding:0;cursor:pointer}
+a{color:var(--accent-ink);text-decoration:none}
+a:hover{text-decoration:underline}
+:focus-visible{outline:2px solid var(--accent);outline-offset:1px;border-radius:4px}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.muted{color:var(--ink-3)}
+
+/* status tokens. Green = ready. Colour grows with severity. */
+.s-ok{--s:var(--ok);--s-ink:var(--ok-ink);--s-bg:transparent}
+.s-build{--s:var(--info);--s-ink:var(--ink-2);--s-bg:transparent}
+.s-partial,.s-late,.s-unstable{--s:var(--warn);--s-ink:var(--warn-ink);--s-bg:var(--warn-bg)}
+.s-fail,.s-unavail{--s:var(--crit);--s-ink:var(--crit-ink);--s-bg:var(--crit-bg)}
+.s-unknown{--s:var(--unk);--s-ink:var(--ink-2);--s-bg:var(--unk-bg)}
+svg.ic{width:16px;height:16px;flex:none;color:var(--s,currentColor)}
+svg.ic.sm{width:14px;height:14px}
+.icon-btn svg.ic,.sb-btn svg.ic.plain{color:currentColor}
+.spin{animation:spin 1.2s linear infinite;transform-origin:50% 50%}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* demo banner (not part of the product) */
+.mockbar{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;padding:6px 24px;background:var(--sel);color:var(--ink-2);font-size:12px;line-height:16px}
+.mockbar b{font-weight:600;color:var(--ink)}
+.mockbar button,.mockbar a{color:var(--accent-ink);text-decoration:underline;text-underline-offset:2px}
+
+/* sticky top: application bar, page bar, and the strip once the board has scrolled away */
+.top{position:sticky;top:0;z-index:10}
+.wrap{max-width:1560px;margin:0 auto;padding:0 24px}
+.appbar{background:var(--bar);color:var(--bar-ink);border-bottom:1px solid var(--bar-line)}
+.abar{display:flex;align-items:center;gap:16px;height:44px}
+.brand{display:inline-flex;align-items:center;gap:8px;color:var(--bar-ink);font-weight:600;font-size:14px}
+.brand:hover{text-decoration:none}
+.brand svg{width:20px;height:20px;display:block}
+.crumbs{display:flex;align-items:center;gap:4px;color:var(--bar-ink-2);font-size:13px;white-space:nowrap}
+.crumbs svg{width:12px;height:12px;color:var(--bar-ink-2);opacity:.7}
+.crumbs [aria-current]{color:var(--bar-ink)}
+.search{margin-left:auto;flex:0 1 300px;display:flex;align-items:center;gap:8px;height:28px;padding:0 8px;border:1px solid var(--bar-line);border-radius:6px;background:var(--bar-field);color:var(--bar-ink-2)}
+.search:focus-within{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.search svg.ic{color:var(--bar-ink-2)}
+.search input{flex:1;min-width:0;border:0;outline:0;background:transparent;font:inherit;font-size:13px;color:var(--bar-ink)}
+.search input::placeholder{color:var(--bar-ink-2)}
+.search input::-webkit-search-cancel-button{display:none}
+kbd{font:11px/16px var(--mono);min-width:18px;text-align:center;border:1px solid var(--bar-line);border-radius:4px;padding:0 4px;color:var(--bar-ink-2)}
+.abar-end{display:flex;align-items:center;gap:8px}
+.appbar .icon-btn{color:var(--bar-ink-2)}
+.appbar .icon-btn:hover{background:var(--bar-field);color:var(--bar-ink)}
+.avatar{display:grid;place-items:center;width:24px;height:24px;border-radius:50%;background:#7a5af8;color:#fff;font-size:11px;font-weight:600;letter-spacing:.02em}
+.icon-btn{width:28px;height:28px;display:inline-grid;place-items:center;border-radius:6px;color:var(--ink-3);transition:background-color .15s var(--ease),color .15s var(--ease)}
+.icon-btn:hover{background:var(--surface-2);color:var(--ink)}
+
+.subbar{background:var(--surface);border-bottom:1px solid var(--line)}
+.sub{display:flex;flex-wrap:wrap;align-items:flex-end;gap:0 24px}
+.mark{font-size:18px;line-height:24px;font-weight:600;margin:0;padding:8px 0;white-space:nowrap;align-self:center}
+.tabs{display:flex;gap:4px}
+.tabs button{display:inline-flex;align-items:center;gap:8px;height:40px;padding:0 12px;margin-bottom:-1px;border-bottom:2px solid transparent;color:var(--ink-2);transition:background-color .15s var(--ease),color .15s var(--ease)}
+.tabs button:hover{color:var(--ink);background:var(--surface-2)}
+.tabs button[aria-pressed="true"]{color:var(--ink);font-weight:600;border-bottom-color:var(--accent)}
+.tabs .cnt{min-width:20px;height:18px;padding:0 6px;border-radius:9px;background:var(--surface-2);font:11px/18px var(--mono);text-align:center;color:var(--ink-2)}
+.tabs .cnt.bad{background:var(--crit-bg);color:var(--crit-ink)}
+
+.strip-wrap{display:none;position:absolute;left:0;right:0;top:100%;background:var(--surface);border-bottom:1px solid var(--line);box-shadow:0 4px 8px rgba(0,0,0,.04)}
+.top.stuck .strip-wrap{display:block}
+.strip{display:flex;flex-wrap:wrap;align-items:center;gap:6px 16px;padding:8px 0}
+.sg{display:flex;align-items:center;gap:4px;flex:none}
+.sg-name{font-size:12px;color:var(--ink-3);margin-right:4px}
+.sc{position:relative;display:inline-flex;align-items:center;gap:4px;height:24px;padding:0 6px;border-radius:6px;border:1px solid transparent;background:transparent;font-size:12px;color:var(--ink-2);white-space:nowrap;overflow:hidden;transition:border-color .15s var(--ease),opacity .15s var(--ease),background-color .15s var(--ease)}
+.sc:hover{background:var(--surface-2);color:var(--ink)}
+.sc .nm{font-weight:500}
+.sc .ic{width:14px;height:14px}
+.sc.alert,.sc.manual{background:var(--s-bg);border-color:color-mix(in srgb,var(--s) 35%,transparent);color:var(--s-ink)}
+.sc.alert:hover,.sc.manual:hover{border-color:color-mix(in srgb,var(--s) 70%,transparent)}
+.sc.manual{padding-left:12px}
+.sc.manual::before{content:"";position:absolute;left:0;top:0;bottom:0;width:6px;background:repeating-linear-gradient(135deg,var(--s) 0 2px,transparent 2px 5px)}
+.sc.dim{opacity:.32}
+.sc.hit{box-shadow:0 0 0 2px var(--accent)}
+
+/* layout */
+main{max-width:1560px;margin:0 auto;padding:16px 24px 64px}
+
+/* the board: the summary */
+.board{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:16px;margin-bottom:16px}
+.board-groups{display:flex;flex-wrap:wrap;gap:16px 32px}
+.bgroup-head{display:flex;align-items:baseline;gap:8px;margin-bottom:8px}
+.bgroup-name{font-size:13px;font-weight:600;color:var(--ink)}
+.bsum{font-size:12px;line-height:16px;color:var(--ink-3)}
+.bsum .bad{color:var(--crit-ink)}
+.bsum .good{color:var(--ok-ink)}
+.tiles{display:flex;flex-wrap:wrap;gap:8px}
+.tile{position:relative;width:var(--tile-w);padding:8px 12px;border-radius:6px;background:var(--surface);border:1px solid var(--line-2);display:flex;flex-direction:column;text-align:left;overflow:hidden;transition:border-color .15s var(--ease),background-color .15s var(--ease),opacity .15s var(--ease)}
+.tile:hover{border-color:var(--accent);background:var(--hover)}
+.tile.alert,.tile.manual{background:var(--s-bg);border-color:color-mix(in srgb,var(--s) 40%,transparent)}
+.tile.alert:hover,.tile.manual:hover{border-color:var(--s)}
+.tile.alert::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--s)}
+.tile.manual{padding-left:16px}
+.tile.manual::before{content:"";position:absolute;left:0;top:0;bottom:0;width:6px;background:repeating-linear-gradient(135deg,var(--s) 0 2px,transparent 2px 5px)}
+.tile-top{display:flex;align-items:center;gap:6px}
+.tile-name{font-size:13px;line-height:20px;font-weight:600}
+.tile-pin{color:var(--ink-3);margin-left:auto}
+.tile-status{font-size:12px;line-height:16px;font-weight:500;color:var(--s-ink);padding-left:22px}
+.tile-ver{display:flex;align-items:center;gap:4px;margin-top:2px;padding-left:22px;font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:11px;line-height:16px;color:var(--ink-2);white-space:nowrap}
+.tile-ver span{overflow:hidden;text-overflow:ellipsis}
+.tile-ver .ic{width:12px;height:12px}
+.tile.dim{opacity:.32}
+.tile.hit{box-shadow:0 0 0 2px var(--accent)}
+
+/* table */
+.table-wrap{background:var(--surface);border:1px solid var(--line);border-radius:8px;overflow:clip}
+table.envs{width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed}
+.envs thead th{position:sticky;top:var(--sticky-top,0px);z-index:3;background:var(--surface);text-align:left;font-size:12px;line-height:20px;font-weight:500;color:var(--ink-3);padding:6px 8px;border-bottom:1px solid var(--line-2);white-space:nowrap}
+.envs thead th:first-child{padding-left:12px}
+.envs td,.envs tbody th{padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top;text-align:left;font-weight:inherit;font-size:13px;line-height:20px}
+.envs tbody tr>:first-child{padding-left:12px}
+.w-pin{width:44px}.w-env{width:76px}.w-st{width:128px}.w-ver{width:164px}.w-run{width:96px}.w-db{width:84px}.w-own{width:140px}.w-act{width:184px}
+
+/* stage group rows */
+.envs tr.grp>td{padding:0;background:var(--surface-2);border-bottom:1px solid var(--line);cursor:pointer}
+.grp-btn{display:flex;align-items:center;gap:8px;width:100%;height:32px;padding:0 12px;text-align:left}
+.grp-btn .chev{color:var(--ink-3)}
+.grp-btn[aria-expanded="false"] .chev{transform:rotate(-90deg)}
+.grp-name{font-weight:600;color:var(--ink)}
+.grp-count{font:11px/16px var(--mono);color:var(--ink-3)}
+.envs tbody:first-of-type tr.grp>td{border-top:0}
+
+tr.row{cursor:pointer;scroll-margin-top:calc(var(--sticky-top,0px) + 48px)}
+tr.row:hover>*{background:var(--hover)}
+tr.row.open>*{background:var(--sel);border-bottom-color:transparent}
+tr.row>:first-child{position:relative}
+tr.row.alert>:first-child{box-shadow:inset 3px 0 0 var(--s)}
+tr.row.manual>:first-child::before{content:"";position:absolute;left:0;top:0;bottom:0;width:6px;background:repeating-linear-gradient(135deg,var(--s) 0 2px,transparent 2px 5px)}
+tr.row.flash>*{animation:flash 1.6s var(--ease)}
+@keyframes flash{0%,40%{background:color-mix(in srgb,var(--accent) 18%,var(--surface))}}
+.row .icon-btn{display:grid;margin:-4px 0}
+.pin[aria-pressed="true"]{color:var(--warn)}
+.env{font-size:13px;font-weight:600;color:var(--accent-ink)}
+.st-cell{display:flex;align-items:center;gap:8px;color:var(--s-ink);font-weight:500;white-space:nowrap}
+.under{display:inline-flex;margin-left:-2px}
+.why{color:var(--ink-2);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.why.strong{color:var(--ink)}
+.why .by,.why .ex{color:var(--ink-3)}
+.note{display:flex;align-items:flex-start;gap:6px;color:var(--ink-3)}
+.note .ic{margin-top:3px}
+.note span{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.ver{display:block;max-width:100%;font-family:var(--mono);font-size:12px;font-variant-numeric:tabular-nums;color:var(--ink);padding:0 4px;margin-left:-4px;border-radius:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:left}
+.ver:hover{background:var(--surface-2)}
+.pol{display:flex;align-items:center;gap:4px;font-size:12px;color:var(--warn-ink);white-space:nowrap}
+.pol .mono{font-size:11px}
+.c-run,.c-db{color:var(--ink-2);white-space:nowrap;font-size:12px}
+.own{color:var(--ink-2)}
+.own.me{color:var(--ink);font-weight:600}
+.own.free{color:var(--ink-3)}
+.until{color:var(--ink-3)}
+.acts{display:flex;justify-content:flex-end;align-items:center;gap:4px}
+.act{height:24px;margin:-2px 0;padding:0 8px;border-radius:6px;font-size:12px;color:var(--ink-3);white-space:nowrap;transition:background-color .15s var(--ease),color .15s var(--ease),opacity .15s var(--ease)}
+.act:hover{background:var(--surface);color:var(--ink);box-shadow:inset 0 0 0 1px var(--line-2)}
+.act.assign{color:var(--accent-ink)}
+.act.take{opacity:0}
+tr.row:hover .act.take,tr.row:focus-within .act.take,tr.row.open .act.take{opacity:1}
+.chev{transition:transform .15s var(--ease)}
+[data-toggle][aria-expanded="true"] .chev{transform:rotate(180deg)}
+
+/* detail row */
+.envs tr.detail>td{background:var(--surface-2);padding:8px 24px 20px 56px;border-bottom:1px solid var(--line-2);cursor:default}
+.dgrid{display:grid;grid-template-columns:minmax(440px,1.6fr) minmax(240px,1fr) minmax(220px,.8fr);gap:16px 32px}
+.dgrid h4{font-size:12px;line-height:16px;font-weight:600;color:var(--ink-3);margin:0 0 8px}
+.dgrid h4.mt{margin-top:24px}
+.jobs{width:100%;border-collapse:separate;border-spacing:0;font-size:12px;background:var(--surface);border:1px solid var(--line);border-radius:6px;overflow:clip}
+.jobs th{font-weight:500;color:var(--ink-3);text-align:left;padding:6px 12px;border-bottom:1px solid var(--line);font-size:12px;line-height:16px;background:var(--surface)}
+.jobs td{padding:5px 12px;border-bottom:1px solid var(--line);white-space:nowrap;font-size:12px}
+.jobs tr:last-child td{border-bottom:0}
+.jobs td:first-child{font-weight:500}
+.res{display:inline-flex;align-items:center;gap:6px;color:var(--ink-2)}
+.r-ok{--s:var(--ok)}.r-fail{--s:var(--crit)}.r-running{--s:var(--info)}
+.r-pending,.r-skipped,.r-aborted{--s:var(--ink-3)}
+.res.r-fail{color:var(--crit-ink);font-weight:500}
+.flagbox{position:relative;overflow:hidden;background:var(--s-bg);border:1px solid color-mix(in srgb,var(--s) 35%,transparent);border-radius:6px;padding:12px 12px 12px 24px}
+.flagbox::before{content:"";position:absolute;left:0;top:0;bottom:0;width:8px;background:repeating-linear-gradient(135deg,var(--s) 0 2px,transparent 2px 5px)}
+.flag-title{display:flex;align-items:center;gap:8px;font-weight:600;color:var(--s-ink)}
+.flagbox p{margin:4px 0 0}
+.flagbox .btn{margin-top:12px}
+.dgrid p{margin:0 0 8px}
+.facts{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;margin:0;font-size:13px}
+.facts dt{color:var(--ink-3)}
+.facts dd{margin:0}
+.facts .btn{margin-top:4px}
+.field{width:100%;min-height:28px;border:1px solid var(--line-2);border-radius:6px;background:var(--surface);color:var(--ink);padding:4px 8px;font:inherit;font-size:13px;line-height:20px}
+.field:focus{outline:0;border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+textarea.field{resize:vertical;min-height:56px}
+.btn-row{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.btn{display:inline-flex;align-items:center;gap:8px;height:28px;padding:0 12px;border-radius:6px;border:1px solid var(--line-2);background:var(--surface);font-size:13px;font-weight:500;color:var(--ink);transition:border-color .15s var(--ease),background-color .15s var(--ease)}
+.btn:hover{border-color:var(--ink-3)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.primary:hover{filter:brightness(1.1)}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn.s-unstable,.btn.s-unavail{color:var(--s-ink)}
+.empty{padding:32px 8px!important;text-align:center!important;color:var(--ink-3)}
+.empty button{color:var(--accent-ink);text-decoration:underline}
+
+/* status bar, in the spirit of an IDE */
+.statusbar{position:fixed;left:0;right:0;bottom:0;z-index:20;height:28px;display:flex;align-items:center;gap:16px;padding:0 12px;background:var(--surface);border-top:1px solid var(--line-2);font-size:12px;color:var(--ink-2)}
+.sb-btn{display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 8px;margin-left:-4px;border-radius:4px;color:var(--ok-ink);font-weight:500}
+.sb-btn:hover{background:var(--surface-2)}
+.sb-sum{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sb-sum .bad{color:var(--crit-ink);font-weight:500}
+.sb-end{margin-left:auto;display:flex;align-items:center;gap:16px;white-space:nowrap;color:var(--ink-3)}
+.sb-end kbd{border-color:var(--line-2);color:var(--ink-3)}
+
+/* popover, tooltip, toast, notes */
+.pop{position:fixed;z-index:40;width:340px;max-width:calc(100vw - 32px);background:var(--surface);border:1px solid var(--line-2);border-radius:8px;box-shadow:var(--shadow);padding:16px;animation:pop-in .18s var(--ease)}
+@keyframes pop-in{from{opacity:0;transform:translateY(-4px)}}
+.pop h3{font-size:13px;line-height:20px;font-weight:600;margin:0 0 8px}
+.pop p{margin:0 0 8px;font-size:13px;color:var(--ink-2)}
+.pop label{display:block;font-size:12px;line-height:16px;color:var(--ink-3);margin:12px 0 4px}
+.pop select.field{height:28px;padding:0 8px}
+.pop .hint{font-size:12px;line-height:16px;color:var(--ink-3);margin:4px 0 0}
+.pop-acts{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}
+.plist{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.plist li{display:grid;grid-template-columns:16px 1fr;gap:8px;font-size:13px}
+.plist .ic{margin-top:2px}
+.plist small{display:block;font-size:12px;line-height:16px;color:var(--ink-3)}
+#tip{position:fixed;left:0;top:0;z-index:50;max-width:320px;background:var(--bar);color:var(--bar-ink);font-size:12px;line-height:16px;padding:6px 8px;border-radius:6px;pointer-events:none;white-space:pre-line}
+#toast{position:fixed;left:50%;bottom:44px;transform:translateX(-50%);background:var(--bar);color:var(--bar-ink);padding:8px 16px;border-radius:6px;font-size:13px;z-index:60;box-shadow:var(--shadow)}
+.notes{position:fixed;top:0;right:0;bottom:0;width:min(460px,100vw);background:var(--surface);border-left:1px solid var(--line);box-shadow:var(--shadow);overflow:auto;padding:16px 24px 32px;z-index:30}
+.notes-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.notes h2{font-size:16px;margin:0;font-weight:600}
+.notes h3{font-size:13px;margin:24px 0 8px;font-weight:600}
+.notes ol,.notes ul{padding-left:20px;margin:8px 0}
+.notes li{margin:0 0 8px;font-size:13px;color:var(--ink-2)}
+.notes li b{color:var(--ink);font-weight:600}
+.notes .src{font-size:12px;line-height:16px;color:var(--ink-3);margin-top:16px}
+
+/* responsive. Hidden columns collapse to zero width so colspan="9" rows still line up. */
+@media (max-width:1360px){
+  :root{--tile-w:132px}
+  .envs .c-db{width:0;padding:0!important;visibility:hidden;overflow:hidden;white-space:nowrap}
+  .dgrid{grid-template-columns:1fr 1fr}
+  .dgrid section:first-child{grid-column:1/-1}
+}
+@media (max-width:1100px){
+  .envs .c-run{width:0;padding:0!important;visibility:hidden;overflow:hidden;white-space:nowrap}
+  .w-act{width:64px}
+  .act{display:none}
+  .crumbs{display:none}
+}
+@media (max-width:900px){
+  .wrap{padding:0 16px}
+  .mockbar{padding:6px 16px}
+  .abar{gap:12px}
+  .search{flex:1 1 auto}
+  .mark{display:none}
+  .tabs{overflow-x:auto;scrollbar-width:none}
+  .board{display:none}
+  .strip-wrap,.top.stuck .strip-wrap{display:block;position:static;box-shadow:none}
+  .strip{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;gap:16px}
+  main{padding:12px 16px 56px}
+  .sb-sum,.sb-end kbd,.sb-end .hintk{display:none}
+  .envs,.envs tbody{display:block}
+  .envs thead{display:none}
+  .envs tr.grp,.envs tr.grp>td{display:block}
+  .envs tr.row{display:grid;grid-template-columns:28px auto minmax(0,1fr) auto;grid-template-areas:"pin env st act" "pin why why why" "pin ver ver own";gap:4px 8px;padding:8px 8px 8px 0;border-bottom:1px solid var(--line)}
+  .envs tr.row>*{display:block;padding:0!important;border:0;background:none!important}
+  .envs tr.row>.c-pin{margin:-8px 0;padding:8px 0 0 4px!important;align-self:stretch}
+  .envs tr.row:hover,.envs tr.row.open{background:var(--hover)}
+  .c-pin{grid-area:pin}.c-env{grid-area:env}.c-st{grid-area:st}.c-act{grid-area:act}.c-why{grid-area:why}.c-ver{grid-area:ver}
+  .c-own{grid-area:own;text-align:right}
+  .c-run,.c-db{display:none!important}
+  tr.detail{display:block}
+  .envs tr.detail>td{display:block;padding:12px 16px}
+  .dgrid{grid-template-columns:1fr}
+  .dgrid section:first-child{overflow-x:auto}
+}
+@media (prefers-reduced-motion:reduce){
+  .spin,.pop{animation:none}
+  *{transition:none!important}
+  tr.row.flash>*{animation:none}
+}
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-ok" viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="currentColor"/><path d="M4.9 8.3l2 2 4.2-4.4" fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-fail" viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="currentColor"/><path d="M5.6 5.6l4.8 4.8M10.4 5.6l-4.8 4.8" stroke="#fff" stroke-width="1.7" stroke-linecap="round"/></symbol>
+  <symbol id="i-partial" viewBox="0 0 16 16"><path d="M8 1.8 14.8 13.8H1.2z" fill="currentColor" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><path d="M8 6.2v3.4" stroke="#fff" stroke-width="1.7" stroke-linecap="round"/><circle cx="8" cy="11.7" r=".95" fill="#fff"/></symbol>
+  <symbol id="i-late" viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="currentColor"/><path d="M8 4.4V8l2.4 1.6" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-build" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-opacity=".28" stroke-width="2"/><path d="M8 2a6 6 0 0 1 6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+  <symbol id="i-unknown" viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="currentColor"/><path d="M6.2 6.3a1.9 1.9 0 1 1 2.6 1.8c-.5.2-.8.6-.8 1.1v.2" fill="none" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/><circle cx="8" cy="11.6" r=".9" fill="#fff"/></symbol>
+  <symbol id="i-unstable" viewBox="0 0 16 16"><path d="M3.6 14.5V2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M4.2 2.4h8.6l-2.1 3.1 2.1 3.1H4.2z" fill="currentColor" stroke="currentColor" stroke-width="1" stroke-linejoin="round"/></symbol>
+  <symbol id="i-unavail" viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="currentColor"/><path d="M4.6 8h6.8" stroke="#fff" stroke-width="2" stroke-linecap="round"/></symbol>
+  <symbol id="i-pending" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-dasharray="2.4 2"/></symbol>
+  <symbol id="i-skip" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.6" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M5.6 8h4.8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+  <symbol id="i-abort" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.6" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M4.2 11.8l7.6-7.6" stroke="currentColor" stroke-width="1.5"/></symbol>
+  <symbol id="i-star" viewBox="0 0 16 16"><path d="M8 1.9l1.85 3.85 4.2.55-3.08 2.92.78 4.17L8 11.37l-3.75 2.02.78-4.17L1.95 6.3l4.2-.55z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></symbol>
+  <symbol id="i-star-on" viewBox="0 0 16 16"><path d="M8 1.9l1.85 3.85 4.2.55-3.08 2.92.78 4.17L8 11.37l-3.75 2.02.78-4.17L1.95 6.3l4.2-.55z" fill="currentColor" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 16 16"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-chev-r" viewBox="0 0 16 16"><path d="M6 3.5L10.5 8 6 12.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-flag" viewBox="0 0 16 16"><path d="M3.6 14.5V2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M4.2 2.4h8.6l-2.1 3.1 2.1 3.1H4.2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></symbol>
+  <symbol id="i-note" viewBox="0 0 16 16"><path d="M3 2.5h10v7.8L10.3 13H3z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M10.2 13v-2.8H13M5.5 6h5M5.5 8.5h3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+  <symbol id="i-search" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.6" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M10.4 10.4l3.6 3.6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 16 16"><circle cx="8" cy="8" r="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 1.5v1.6M8 12.9v1.6M1.5 8h1.6M12.9 8h1.6M3.4 3.4l1.1 1.1M11.5 11.5l1.1 1.1M3.4 12.6l1.1-1.1M11.5 4.5l1.1-1.1" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 16 16"><path d="M13.3 10.2A5.6 5.6 0 0 1 5.8 2.7a5.6 5.6 0 1 0 7.5 7.5z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></symbol>
+  <symbol id="i-auto" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.8" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 2.2a5.8 5.8 0 0 1 0 11.6z" fill="currentColor"/></symbol>
+  <symbol id="i-x" viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+</svg>
+
+<div class="mockbar"><span><b>Envboard</b> · a design study for an environment status board. Sample data, nothing is live.</span><button id="notesBtn" aria-expanded="false" aria-controls="notes">Design notes</button></div>
+
+<header class="top" id="top">
+  <div class="appbar">
+    <div class="wrap abar">
+      <a class="brand" href="#" data-mock="Would open the home page"><svg viewBox="0 0 20 20" aria-hidden="true"><rect width="20" height="20" rx="5" fill="#3574f0"/><path d="M6 6.2h8M6 10h8M6 13.8h5" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/></svg>Envboard</a>
+      <nav class="crumbs" aria-label="Breadcrumb"><span>Projects</span><svg aria-hidden="true"><use href="#i-chev-r"/></svg><span aria-current="page">Nimbus</span></nav>
+      <label class="search"><svg class="ic" aria-hidden="true"><use href="#i-search"/></svg><input id="q" type="search" placeholder="Search environments" aria-label="Search by environment, version, owner or note" autocomplete="off" spellcheck="false"><kbd aria-hidden="true">/</kbd></label>
+      <div class="abar-end">
+        <button class="icon-btn" id="themeBtn" aria-label="Theme: auto"><svg class="ic" aria-hidden="true"><use href="#i-auto"/></svg></button>
+        <span class="avatar" role="img" aria-label="Signed in as Jordan Blake">JB</span>
+      </div>
+    </div>
+  </div>
+  <div class="subbar">
+    <div class="wrap sub">
+      <h1 class="mark">Environments</h1>
+      <div class="tabs" id="filters" role="group" aria-label="Show"></div>
+    </div>
+  </div>
+  <div class="strip-wrap" id="stripWrap"><div class="wrap"><nav class="strip" id="strip" aria-label="All environments, go to row"></nav></div></div>
+</header>
+
+<main>
+  <section class="board" id="board" aria-labelledby="boardTitle">
+    <h2 class="sr-only" id="boardTitle">Overview by stage</h2>
+    <div class="board-groups" id="boardGroups"></div>
+  </section>
+
+  <div class="table-wrap">
+    <table class="envs" id="envTable">
+      <caption class="sr-only">Environments in pipeline order, grouped by stage. Open a row for job times, the manual flag, the standing note and ownership.</caption>
+      <thead><tr>
+        <th scope="col" class="w-pin c-pin"><span class="sr-only">Pinned</span></th>
+        <th scope="col" class="w-env">Env</th>
+        <th scope="col" class="w-st">Status</th>
+        <th scope="col" class="w-why">Reason and notes</th>
+        <th scope="col" class="w-ver">Nimbus release</th>
+        <th scope="col" class="w-run c-run">Last run</th>
+        <th scope="col" class="w-db c-db">DB restore</th>
+        <th scope="col" class="w-own">Owner</th>
+        <th scope="col" class="w-act"><span class="sr-only">Actions</span></th>
+      </tr></thead>
+    </table>
+  </div>
+</main>
+
+<footer class="statusbar" id="statusbar">
+  <button class="sb-btn" id="platBtn" aria-haspopup="dialog" aria-expanded="false"><svg class="ic" aria-hidden="true" style="--s:var(--ok)"><use href="#i-ok"/></svg>Platform healthy</button>
+  <span class="sb-sum" id="sbSum"></span>
+  <span class="sb-end"><span class="mono" tabindex="0" data-tip="Refreshes every minute. Turns amber when the data is more than 5 minutes old.">Updated 20:07</span><span class="hintk"><kbd aria-hidden="true">/</kbd> search</span></span>
+</footer>
+
+<aside class="notes" id="notes" hidden aria-labelledby="notesTitle">
+  <div class="notes-head">
+    <h2 id="notesTitle">Design notes</h2>
+    <button class="icon-btn" id="notesClose" aria-label="Close"><svg class="ic" aria-hidden="true"><use href="#i-x"/></svg></button>
+  </div>
+  <ol>
+    <li><b>The board is the summary.</b> Every environment sits under its stage, with one line per stage such as "3 need attention · 1 deploying". Once you scroll past it, a slim strip of the same chips stays pinned under the header.</li>
+    <li><b>Green means ready.</b> A healthy environment gets one calm green tick. Problems add a bar, a word and a stronger colour, so they still stand out. Deploying is blue and is not counted as a problem.</li>
+    <li><b>A familiar frame.</b> A dark application bar with breadcrumb and global search, a page title with underlined tabs for the filters, stage groups you can fold in the table, and a status bar with platform health and live counts. The structure comes from JetBrains IDEs and TeamCity-style build tools.</li>
+    <li><b>Reasons are readable.</b> In the table they wrap to two lines instead of cutting off the ticket number. A flag shows who set it and when. On the board, hovering or focusing a tile shows the reason.</li>
+    <li><b>Late deployments show up.</b> If the nightly (Sandbox, Preview) or weekly (Rehearsal, Pre-live) deploy did not run, the environment turns amber: "Not deployed since Thu". PRV-2 is an example.</li>
+    <li><b>Versions read like a departures board.</b> The Nimbus release is aligned monospace. The Beacon version appears under it only when the two differ, with a small amber triangle on the board tile.</li>
+    <li><b>Clear ownership.</b> "Assign to me" only appears on free environments. Taking one from someone asks first and can end at a set time. The star means pinned, and your own environments say "You".</li>
+    <li><b>Flags need a reason.</b> The flag button opens a small form with a required reason. Hatched stripes mark a manual flag and appear nowhere else.</li>
+  </ol>
+  <h3>Assumptions in the sample data</h3>
+  <ul>
+    <li>Nightly deploys finish by 09:00 on Sandbox and Preview. Rehearsal and Pre-live deploy weekly on Friday.</li>
+    <li>A stopped relay only shows in the reason. It does not change the status on its own.</li>
+    <li>A failed smoke-test run does not change the status either. It shows in grey next to an OK environment.</li>
+  </ul>
+  <p class="src">All names, versions, tickets and people are made up. Inspired by the look of JetBrains products and TeamCity; not affiliated with or endorsed by JetBrains.</p>
+</aside>
+
+<div class="pop" id="pop" role="dialog" aria-labelledby="popTitle" hidden></div>
+<div id="tip" role="tooltip" hidden></div>
+<div id="toast" role="status" aria-live="polite" hidden></div>
+<noscript><p style="padding:24px">This demo needs JavaScript.</p></noscript>
+
+<script>
+(() => {
+'use strict';
+
+/* ---------- sample data (fictional) ---------- */
+const ME = 'Jordan Blake';
+const NOW = new Date(2026, 10, 23, 20, 7, 0);          // Monday 23 Nov 2026, 20:07
+const NOW_ISO = '2026-11-23T20:07:00';
+const STAGES = ['Sandbox', 'Preview', 'Rehearsal', 'Pre-live'];
+const SCHEDULE = {
+  'Sandbox':   { daily: true, by: 9 },
+  'Preview':   { daily: true, by: 9 },
+  'Rehearsal': { weekday: 5 },
+  'Pre-live':  { weekday: 5 },
+};
+const T = (d, t) => `2026-11-${String(d).padStart(2, '0')}T${t}:00`;
+const job = (name, result, start = null, end = null) => ({ name, result, start, end });
+const N = 'Nightly deploy', W = 'Weekly deploy', TD = 'Teardown', BS = 'Boot services', ST = 'Smoke tests';
+
+const ENVS = [
+  { id:'SBX-1', stage:'Sandbox', status:'ok', rel:'4.12.0-2210', beacon:'4.12.0-2210', relay:'Running', db:'2026-10-28', owner:'Ingrid Solberg',
+    jobs:[job(TD,'ok',T(17,'06:02'),T(17,'06:44')), job(N,'ok',T(23,'08:21'),T(23,'08:46')), job(BS,'ok',T(23,'08:46'),T(23,'09:43')), job(ST,'fail',T(23,'08:46'),T(23,'12:31'))] },
+  { id:'SBX-2', stage:'Sandbox', status:'partial', rel:'4.12.0-9be31d2', beacon:'4.12.0-9be31d2', relay:'Running', db:'2026-11-08', owner:'Mateo Alvarez',
+    note:{ text:'Keep on 9be31d2 until Thursday: load test running', by:'Mateo Alvarez', at:T(19,'09:12') },
+    jobs:[job(TD,'ok',T(12,'06:05'),T(12,'06:40')), job(N,'ok',T(23,'00:06'),T(23,'00:33')), job(BS,'fail',T(23,'00:33'),T(23,'00:34')), job(ST,'skipped')] },
+  { id:'SBX-3', stage:'Sandbox', status:'ok', rel:'4.12.0-2210', beacon:'4.12.0-2210', relay:'Running', db:'2026-11-20', owner:'Jordan Blake',
+    jobs:[job(TD,'ok',T(23,'05:31'),T(23,'05:58')), job(N,'ok',T(23,'06:10'),T(23,'06:35')), job(BS,'ok',T(23,'06:35'),T(23,'07:20')), job(ST,'ok',T(23,'07:20'),T(23,'10:02'))] },
+  { id:'SBX-4', stage:'Sandbox', status:'fail', rel:'4.12.0-2204', beacon:'4.12.0-2204', relay:'Stopped', db:'2026-11-14', owner:'Hana Kobayashi',
+    jobs:[job(TD,'ok',T(17,'06:10'),T(17,'06:52')), job(N,'fail',T(23,'07:12'),T(23,'07:31')), job(BS,'skipped'), job(ST,'skipped')] },
+  { id:'SBX-5', stage:'Sandbox', status:'build', rel:'4.12.0-2205', beacon:'4.12.0-2205', relay:'Running', db:'2026-11-10', owner:null,
+    jobs:[job(TD,'ok',T(17,'06:15'),T(17,'06:58')), job(N,'running',T(23,'19:58')), job(BS,'pending'), job(ST,'pending')] },
+  { id:'SBX-6', stage:'Sandbox', status:'ok', rel:'4.12.0-2210', beacon:'4.12.0-2210', relay:'Running', db:'2026-11-05', owner:'Oluwaseun Adeyemi',
+    override:{ type:'unavail', by:'Oluwaseun Adeyemi', at:T(23,'10:15'), reason:'App server disk full, waiting on infra (OPS-1042)' },
+    jobs:[job(TD,'ok',T(17,'06:20'),T(17,'07:01')), job(N,'ok',T(23,'08:02'),T(23,'08:27')), job(BS,'ok',T(23,'08:27'),T(23,'09:15')), job(ST,'ok',T(23,'09:15'),T(23,'11:48'))] },
+
+  { id:'PRV-1', stage:'Preview', status:'ok', rel:'4.11.0-1043', beacon:'4.11.0-1043', relay:'Running', db:'2026-11-02', owner:'Elena Petrova',
+    jobs:[job(TD,'ok',T(16,'05:00'),T(16,'05:41')), job(N,'ok',T(23,'05:00'),T(23,'05:24')), job(BS,'ok',T(23,'05:24'),T(23,'06:02')), job(ST,'ok',T(23,'06:02'),T(23,'08:40'))] },
+  { id:'PRV-2', stage:'Preview', status:'ok', rel:'4.11.0-1038', beacon:'4.11.0-1038', relay:'Running', db:'2026-11-02', owner:null,
+    jobs:[job(TD,'ok',T(16,'05:10'),T(16,'05:49')), job(N,'ok',T(19,'05:30'),T(19,'05:51')), job(BS,'ok',T(19,'05:51'),T(19,'06:30')), job(ST,'ok',T(19,'06:30'),T(19,'09:05'))] },
+  { id:'PRV-3', stage:'Preview', status:'ok', rel:'4.11.0-1040', beacon:'4.11.0-1040', relay:'Running', db:'2026-10-30', owner:'Declan Murphy',
+    override:{ type:'unstable', by:'Declan Murphy', at:T(22,'16:40'), reason:'Intermittent relay timeouts, avoid load runs' },
+    jobs:[job(TD,'ok',T(16,'05:20'),T(16,'05:58')), job(N,'ok',T(23,'06:00'),T(23,'06:22')), job(BS,'ok',T(23,'06:22'),T(23,'07:05')), job(ST,'ok',T(23,'07:05'),T(23,'09:30'))] },
+
+  { id:'RHS-1', stage:'Rehearsal', status:'ok', rel:'4.10.0-377', beacon:'4.10.0-377', relay:'Running', db:'2026-10-19', owner:'Ravi Menon',
+    jobs:[job(TD,'ok',T(20,'10:20'),T(20,'11:02')), job(W,'ok',T(20,'11:08'),T(20,'11:28')), job(BS,'ok',T(20,'11:28'),T(20,'12:05')), job(ST,'ok',T(20,'12:05'),T(20,'15:40'))] },
+  { id:'RHS-2', stage:'Rehearsal', status:'ok', rel:'4.10.0-377', beacon:'4.10.0-371', relay:'Running', db:'2026-10-19', owner:'Zoe Fontaine',
+    note:{ text:'Beacon hotfix BCN-318 pending, expect a version mismatch until Wednesday', by:'Zoe Fontaine', at:T(20,'14:03') },
+    jobs:[job(TD,'ok',T(20,'10:22'),T(20,'11:04')), job(W,'ok',T(20,'11:30'),T(20,'11:52')), job(BS,'ok',T(20,'11:52'),T(20,'12:31')), job(ST,'ok',T(20,'12:31'),T(20,'16:02'))] },
+  { id:'RHS-3', stage:'Rehearsal', status:'unknown', rel:'4.10.0-374', beacon:'4.10.0-374', relay:'Stopped', db:'2026-10-12', owner:null,
+    jobs:[job(TD,'ok',T(20,'10:25'),T(20,'11:05')), job(W,'aborted',T(20,'11:10'),T(20,'11:52')), job(BS,'skipped'), job(ST,'skipped')] },
+
+  { id:'PLV-1', stage:'Pre-live', status:'ok', rel:'4.11.0-1038', beacon:'4.11.0-1038', relay:'Running', db:'2026-11-15', owner:'Elena Petrova',
+    jobs:[job(TD,'ok',T(20,'13:00'),T(20,'13:40')), job(W,'ok',T(20,'13:45'),T(20,'14:06')), job(BS,'ok',T(20,'14:06'),T(20,'14:48')), job(ST,'ok',T(20,'14:48'),T(20,'18:10'))] },
+  { id:'PLV-2', stage:'Pre-live', status:'ok', rel:'4.11.0-1038', beacon:'4.11.0-1038', relay:'Running', db:'2026-11-15', owner:null,
+    jobs:[job(TD,'ok',T(20,'13:05'),T(20,'13:44')), job(W,'ok',T(20,'14:10'),T(20,'14:31')), job(BS,'ok',T(20,'14:31'),T(20,'15:09')), job(ST,'ok',T(20,'15:09'),T(20,'18:40'))] },
+  { id:'PLV-3', stage:'Pre-live', status:'ok', rel:'4.11.0-1038', beacon:'4.11.0-1038', relay:'Running', db:'2026-11-15', owner:'Mateo Alvarez',
+    jobs:[job(TD,'ok',T(20,'13:10'),T(20,'13:49')), job(W,'ok',T(20,'14:35'),T(20,'14:58')), job(BS,'ok',T(20,'14:58'),T(20,'15:37')), job(ST,'ok',T(20,'15:37'),T(20,'19:02'))] },
+];
+const byId = id => ENVS.find(e => e.id === id);
+
+/* One name per status, used on the board, the strip, the table, the filters and search */
+const STATUS = {
+  ok:       { label:'OK',            icon:'i-ok' },
+  partial:  { label:'Partly failed', icon:'i-partial' },
+  fail:     { label:'Failed',        icon:'i-fail' },
+  late:     { label:'Late',          icon:'i-late' },
+  build:    { label:'Deploying',     icon:'i-build' },
+  unknown:  { label:'Unknown',       icon:'i-unknown' },
+  unstable: { label:'Unstable',      icon:'i-unstable', manual:true },
+  unavail:  { label:'Unavailable',   icon:'i-unavail',  manual:true },
+};
+const RESULT = {
+  ok:      { label:'Succeeded', icon:'i-ok' },
+  fail:    { label:'Failed',    icon:'i-fail' },
+  running: { label:'Running',   icon:'i-build' },
+  pending: { label:'Waiting',   icon:'i-pending' },
+  skipped: { label:'Skipped',   icon:'i-skip' },
+  aborted: { label:'Aborted',   icon:'i-abort' },
+};
+
+/* ---------- helpers ---------- */
+const $ = (s, r = document) => r.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
+const store = {
+  get(k, d) { try { const v = localStorage.getItem('envboard:' + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem('envboard:' + k, JSON.stringify(v)); } catch {} },
+};
+const D = s => new Date(s.length === 10 ? s + 'T00:00:00' : s);
+const fHM = new Intl.DateTimeFormat('en-GB', { hour:'2-digit', minute:'2-digit', hour12:false });
+const fW = new Intl.DateTimeFormat('en-GB', { weekday:'short' });
+const fDM = new Intl.DateTimeFormat('en-GB', { day:'numeric', month:'short' });
+const fDMY = new Intl.DateTimeFormat('en-GB', { day:'numeric', month:'short', year:'numeric' });
+const sod = d => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+const daysAgo = d => Math.round((sod(NOW) - sod(d)) / 864e5);
+const hm = d => fHM.format(d);
+const dayLabel = d => { const n = daysAgo(d); return n === 0 ? 'Today' : n === 1 ? 'Yesterday' : `${fW.format(d)} ${fDM.format(d)}`; };
+const whenShort = d => { const n = daysAgo(d); return n === 0 ? hm(d) : n < 7 ? `${fW.format(d)} ${hm(d)}` : fDM.format(d); };
+const whenLong = d => { const n = daysAgo(d); return n === 0 ? `today ${hm(d)}` : n === 1 ? `yesterday ${hm(d)}` : `${fW.format(d)} ${fDM.format(d)} ${hm(d)}`; };
+const dayOnly = d => { const n = daysAgo(d); return n === 1 ? 'yesterday' : n < 7 ? fW.format(d) : fDM.format(d); };
+const agoText = n => n === 0 ? 'today' : n === 1 ? '1 day ago' : `${n} days ago`;
+const dur = ms => { const m = Math.max(1, Math.round(ms / 6e4)); if (m < 60) return `${m} min`; const h = Math.floor(m / 60), r = m % 60; return r ? `${h} h ${r} min` : `${h} h`; };
+const first = n => n.split(/\s+/)[0];
+const person = n => n === ME ? 'You' : n;
+const icon = (id, cls = 'ic') => `<svg class="${cls}" aria-hidden="true"><use href="#${id}"/></svg>`;
+
+/* ---------- derived state ---------- */
+const deployJob = e => e.jobs[1];
+function expectedSince(stage) {
+  const s = SCHEDULE[stage], d = sod(NOW);
+  if (s.daily) { if (NOW.getHours() < s.by) d.setDate(d.getDate() - 1); return d; }
+  const back = (d.getDay() - s.weekday + 7) % 7;
+  d.setDate(d.getDate() - back);
+  if (back === 0 && NOW.getHours() < 18) d.setDate(d.getDate() - 7);
+  return d;
+}
+const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const schedText = stage => SCHEDULE[stage].daily ? `Daily, by ${String(SCHEDULE[stage].by).padStart(2, '0')}:00` : `Weekly, ${WEEKDAYS[SCHEDULE[stage].weekday]}`;
+const schedShort = stage => SCHEDULE[stage].daily ? `runs daily by ${String(SCHEDULE[stage].by).padStart(2, '0')}:00` : `runs weekly, ${WEEKDAYS[SCHEDULE[stage].weekday]}`;
+function isLate(e) { const j = deployJob(e); return !!j.start && D(j.start) < expectedSince(e.stage); }
+const autoStatus = e => e.status !== 'ok' ? e.status : (isLate(e) ? 'late' : 'ok');
+const eff = e => e.override ? e.override.type : autoStatus(e);
+const attention = s => s !== 'ok' && s !== 'build';
+const isMine = e => e.owner === ME || state.pinned.has(e.id);
+
+function autoReason(e, s) {
+  const find = r => e.jobs.find(j => j.result === r);
+  switch (s) {
+    case 'fail': case 'partial': { const j = find('fail'); return j ? `${j.name} failed · ${whenShort(D(j.end))}` : ''; }
+    case 'build': { const j = find('running'); return j ? `${j.name} running since ${hm(D(j.start))}` : 'Deployment running'; }
+    case 'unknown': { const j = find('aborted'); return j ? `${j.name} aborted · ${whenShort(D(j.end))}` : 'No recent data'; }
+    case 'late': return `Not deployed since ${dayOnly(D(deployJob(e).start))}`;
+  }
+  return '';
+}
+function extras(e) {
+  const s = eff(e), under = autoStatus(e), out = [];
+  if (e.override && under !== 'ok') out.push(`Deployment: ${autoReason(e, under) || STATUS[under].label}`);
+  if (s === 'late') out.push(schedShort(e.stage));
+  if (e.relay !== 'Running') out.push(`Relay ${e.relay.toLowerCase()}`);
+  const h = e.jobs.find(j => j.name === ST && j.result === 'fail');
+  if (h && s === 'ok') out.push(`${ST} failed · ${whenShort(D(h.end))}`);
+  return out;
+}
+function reasonText(e) {
+  const main = e.override ? `${e.override.reason} (${person(e.override.by)}, ${whenShort(D(e.override.at))})` : autoReason(e, eff(e));
+  return [main, ...extras(e)].filter(Boolean).join(' · ');
+}
+
+/* ---------- view state ---------- */
+const state = {
+  filter: 'all',
+  query: '',
+  pinned: new Set(store.get('pinned', ['PRV-1'])),
+  expanded: new Set(),
+  collapsed: new Set(),
+};
+const FILTERS = [
+  ['all', 'All', () => true],
+  ['attention', 'Needs attention', e => attention(eff(e))],
+  ['mine', 'Mine', e => isMine(e)],
+];
+const passFilter = e => FILTERS.find(f => f[0] === state.filter)[2](e);
+function passQuery(e) {
+  const q = state.query.trim().toLowerCase();
+  if (!q) return true;
+  const hay = [e.id, e.stage, e.rel, e.beacon, e.owner || 'free unassigned', e.owner === ME ? 'me you mine' : '',
+    e.note?.text, reasonText(e), STATUS[eff(e)].label].join(' ').toLowerCase();
+  return q.split(/\s+/).every(t => hay.includes(t));
+}
+const visible = e => passFilter(e) && passQuery(e);
+
+/* ---------- renderers ---------- */
+function renderFilters() {
+  $('#filters').innerHTML = FILTERS.map(([k, label, fn]) => {
+    const n = ENVS.filter(fn).length, on = state.filter === k;
+    return `<button data-filter="${k}" aria-pressed="${on}">${label}<span class="cnt${k === 'attention' && n ? ' bad' : ''}">${n}</span></button>`;
+  }).join('');
+}
+function chipClass(e) {
+  const s = eff(e);
+  return `s-${s}${e.override ? ' manual' : attention(s) ? ' alert' : ''}`;
+}
+function stageSummary(list) {
+  const bad = list.filter(e => attention(eff(e))).length, dep = list.filter(e => eff(e) === 'build').length;
+  const parts = [];
+  if (bad) parts.push(`<span class="bad">${bad} need${bad === 1 ? 's' : ''} attention</span>`);
+  if (dep) parts.push(`${dep} deploying`);
+  return parts.length ? parts.join(' · ') : '<span class="good">all OK</span>';
+}
+function renderStatusBar() {
+  const bad = ENVS.filter(e => attention(eff(e))).length, dep = ENVS.filter(e => eff(e) === 'build').length;
+  $('#sbSum').innerHTML = `${ENVS.length} environments · ${bad ? `<span class="bad">${bad} need attention</span>` : 'all ready'}${dep ? ` · ${dep} deploying` : ''}`;
+}
+function renderBoard() {
+  const q = state.query.trim();
+  $('#boardGroups').innerHTML = STAGES.map((stage, i) => {
+    const list = ENVS.filter(e => e.stage === stage);
+    const tiles = list.map(e => {
+      const s = eff(e), st = STATUS[s], r = reasonText(e), pinned = state.pinned.has(e.id), mism = e.beacon !== e.rel;
+      const owner = e.owner ? person(e.owner) : 'free';
+      const cls = `tile ${chipClass(e)}${!visible(e) ? ' dim' : q ? ' hit' : ''}`;
+      const aria = `${e.id}, ${st.label}${r ? '. ' + r : ''}. Release ${e.rel}${mism ? `, Beacon ${e.beacon} differs` : ''}. Owner: ${owner}. Go to row`;
+      const tip = [r, mism ? `Beacon ${e.beacon} differs from the release` : '', `Owner: ${owner}`].filter(Boolean).join('\n');
+      return `<button class="${cls}" data-goto="${e.id}" aria-label="${esc(aria)}" data-tip="${esc(tip)}">
+        <span class="tile-top">${icon(st.icon, s === 'build' ? 'ic st spin' : 'ic st')}<span class="tile-name">${e.id}</span>${pinned ? icon('i-star-on', 'ic sm tile-pin') : ''}</span>
+        <span class="tile-status">${st.label}</span>
+        <span class="tile-ver"><span>${esc(e.rel)}</span>${mism ? icon('i-partial', 'ic s-partial') : ''}</span>
+      </button>`;
+    }).join('');
+    return `<div class="bgroup" role="group" aria-labelledby="bg-${i}">
+      <div class="bgroup-head"><span class="bgroup-name" id="bg-${i}">${stage}</span><span class="bsum">${stageSummary(list)}</span></div>
+      <div class="tiles">${tiles}</div></div>`;
+  }).join('');
+}
+function renderStrip() {
+  const q = state.query.trim();
+  $('#strip').innerHTML = STAGES.map(stage => {
+    const chips = ENVS.filter(e => e.stage === stage).map(e => {
+      const s = eff(e), st = STATUS[s], r = reasonText(e), vis = visible(e);
+      const cls = `sc ${chipClass(e)}${!vis ? ' dim' : q ? ' hit' : ''}`;
+      const inner = s === 'ok' ? `${icon(st.icon)}<span class="nm">${e.id}</span>` : `${icon(st.icon)}<span class="nm">${e.id}</span><span>${st.label}</span>`;
+      return `<button class="${cls}" data-goto="${e.id}" aria-label="${esc(`${e.id}, ${st.label}${r ? '. ' + r : ''}. Go to row`)}"${r ? ` data-tip="${esc(r)}"` : ''}>${inner}</button>`;
+    }).join('');
+    return `<div class="sg" role="group" aria-label="${stage}"><span class="sg-name" aria-hidden="true">${stage}</span>${chips}</div>`;
+  }).join('');
+}
+function whyHTML(e) {
+  const s = eff(e);
+  const main = e.override
+    ? `${esc(e.override.reason)} <span class="by">· ${esc(person(e.override.by))}, ${esc(whenShort(D(e.override.at)))}</span>`
+    : esc(autoReason(e, s));
+  const ex = extras(e);
+  let html = '';
+  if (main || ex.length) html += `<div class="why${attention(s) ? ' strong' : ''}">${main}${ex.length ? `<span class="ex">${main ? ' · ' : ''}${esc(ex.join(' · '))}</span>` : ''}</div>`;
+  if (e.note) html += `<div class="note">${icon('i-note', 'ic sm')}<span>${esc(e.note.text)}</span></div>`;
+  return html;
+}
+function verHTML(e) {
+  const pol = e.beacon !== e.rel
+    ? `<div class="pol s-partial">${icon('i-partial', 'ic sm')}Beacon <span class="mono">${esc(e.beacon)}</span></div>` : '';
+  return `<button class="ver" data-copy="${esc(e.rel)}" data-tip="Copy">${esc(e.rel)}</button>${pol}`;
+}
+function ownerHTML(e) {
+  if (!e.owner) return `<span class="own free">Free</span>`;
+  if (e.owner === ME) return `<span class="own me">You</span>${e.until ? `<span class="until"> · until ${esc(e.until)}</span>` : ''}`;
+  return `<span class="own">${esc(e.owner)}</span>`;
+}
+function ownerAction(e, cls = 'act') {
+  if (!e.owner) return `<button class="${cls} assign" data-assign="${e.id}">Assign to me</button>`;
+  if (e.owner === ME) return `<button class="${cls}" data-release="${e.id}">Release</button>`;
+  return `<button class="${cls} take" data-take="${e.id}" aria-haspopup="dialog" aria-label="Take ${e.id} from ${esc(e.owner)}">Take from ${esc(first(e.owner))}…</button>`;
+}
+function actsHTML(e) {
+  const open = state.expanded.has(e.id);
+  return `<div class="acts">${ownerAction(e)}
+    <button class="icon-btn" data-flag="${e.id}" aria-haspopup="dialog" aria-label="${e.override ? `${e.id} is flagged. Change flag` : `Flag ${e.id}`}" data-tip="${e.override ? 'Flagged' : 'Flag'}">${icon('i-flag')}</button>
+    <button class="icon-btn" data-toggle="${e.id}" aria-expanded="${open}" aria-controls="det-${e.id}" aria-label="${open ? 'Hide' : 'Show'} ${e.id} details">${icon('i-chev', 'ic chev')}</button></div>`;
+}
+function detailHTML(e) {
+  const under = autoStatus(e);
+  const jobs = e.jobs.map(j => {
+    const r = RESULT[j.result], a = j.start ? D(j.start) : null, b = j.end ? D(j.end) : null;
+    const fin = b ? (daysAgo(a) === daysAgo(b) ? hm(b) : `${dayLabel(b)} ${hm(b)}`) : (j.result === 'running' ? 'running' : '–');
+    return `<tr><td>${esc(j.name)}</td><td><span class="res r-${j.result}">${icon(r.icon)}${r.label}</span></td>
+      <td class="mono">${a ? `${dayLabel(a)} ${hm(a)}` : '–'}</td><td class="mono">${fin}</td><td class="mono">${a ? dur((b || NOW) - a) : '–'}</td>
+      <td>${a ? `<a href="#" data-mock="Would open this job's log">Log</a>` : ''}</td></tr>`;
+  }).join('');
+  const flag = e.override ? `
+      <div class="flagbox s-${e.override.type}">
+        <div class="flag-title">${icon(STATUS[e.override.type].icon)}${STATUS[e.override.type].label}</div>
+        <p>${esc(e.override.reason)}</p>
+        <p class="muted">Flagged by ${esc(person(e.override.by))}, ${esc(whenLong(D(e.override.at)))}. Deployment underneath: ${STATUS[under].label}.</p>
+        <button class="btn" data-clear-flag="${e.id}">Clear flag</button>
+      </div>` : `<button class="btn" data-flag="${e.id}" aria-haspopup="dialog">${icon('i-flag')}Flag ${e.id}…</button>`;
+  const note = e.note ? `
+      <p>${esc(e.note.text)}</p>
+      <p class="muted">${esc(person(e.note.by))}, ${esc(whenLong(D(e.note.at)))}</p>
+      <button class="btn" data-clear-note="${e.id}">Clear note</button>` : `
+      <input class="field" id="note-${e.id}" placeholder="Stays until someone clears it" aria-label="Standing note for ${e.id}">
+      <div class="btn-row"><button class="btn" data-add-note="${e.id}">Save note</button></div>`;
+  const db = D(e.db);
+  const ownerText = e.owner ? person(e.owner) : 'Free';
+  const ownerExtra = [e.until ? `until ${e.until}` : '', e.prevOwner ? `taken from ${e.prevOwner}` : ''].filter(Boolean).join(', ');
+  return `<div class="dgrid">
+    <section><h4>Latest jobs</h4>
+      <table class="jobs"><thead><tr><th>Job</th><th>Result</th><th>Started</th><th>Finished</th><th>Took</th><th><span class="sr-only">Link</span></th></tr></thead><tbody>${jobs}</tbody></table>
+    </section>
+    <section><h4>Manual flag</h4>${flag}<h4 class="mt">Standing note</h4>${note}</section>
+    <section><h4>Environment</h4>
+      <dl class="facts">
+        <dt>Owner</dt><dd>${esc(ownerText)}${ownerExtra ? ` <span class="muted">(${esc(ownerExtra)})</span>` : ''}<br>${ownerAction(e, 'btn')}</dd>
+        <dt>Relay</dt><dd>${esc(e.relay)}</dd>
+        <dt>DB restored</dt><dd>${fDMY.format(db)} <span class="muted">· ${agoText(daysAgo(db))}</span></dd>
+        <dt>Deploys</dt><dd>${schedText(e.stage)}</dd>
+      </dl>
+    </section></div>`;
+}
+function rowHTML(e) {
+  const s = eff(e), st = STATUS[s], open = state.expanded.has(e.id), pinned = state.pinned.has(e.id);
+  const under = autoStatus(e), dj = deployJob(e), db = D(e.db);
+  const underIcon = e.override && under !== 'ok'
+    ? `<span class="under s-${under}" data-tip="Deployment underneath: ${STATUS[under].label}">${icon(STATUS[under].icon, 'ic sm')}<span class="sr-only">, deployment ${STATUS[under].label}</span></span>` : '';
+  return `<tr class="row ${chipClass(e)}${open ? ' open' : ''}" id="row-${e.id}" data-env="${e.id}">
+    <td class="c-pin"><button class="icon-btn pin" data-pin="${e.id}" aria-pressed="${pinned}" aria-label="Pin ${e.id}" data-tip="${pinned ? 'Unpin' : 'Pin'}">${icon(pinned ? 'i-star-on' : 'i-star')}</button></td>
+    <th scope="row" class="c-env"><a href="#" class="env" data-mock="Would open the ${e.id} page">${e.id}</a></th>
+    <td class="c-st"><span class="st-cell">${icon(st.icon, s === 'build' ? 'ic spin' : 'ic')}${st.label}${underIcon}</span></td>
+    <td class="c-why">${whyHTML(e)}</td>
+    <td class="c-ver">${verHTML(e)}</td>
+    <td class="c-run mono"${dj.start ? ` data-tip="${esc(`${dj.name} · ${dayLabel(D(dj.start))} ${hm(D(dj.start))}`)}"` : ''}>${dj.start ? whenShort(D(dj.start)) : '–'}</td>
+    <td class="c-db mono" data-tip="${esc(`${fDMY.format(db)} · ${agoText(daysAgo(db))}`)}">${fDM.format(db)}</td>
+    <td class="c-own">${ownerHTML(e)}</td>
+    <td class="c-act">${actsHTML(e)}</td>
+  </tr>
+  <tr class="detail" id="det-${e.id}"${open ? '' : ' hidden'}><td colspan="9">${open ? detailHTML(e) : ''}</td></tr>`;
+}
+function groupHTML(stage, list, rows) {
+  const open = !state.collapsed.has(stage);
+  return `<tr class="grp" data-stage="${stage}"><td colspan="9"><button class="grp-btn" data-collapse="${stage}" aria-expanded="${open}">${icon('i-chev', 'ic chev')}<span class="grp-name">${stage}</span><span class="grp-count">${rows}/${list.length}</span><span class="bsum">${stageSummary(list)}</span></button></td></tr>`;
+}
+function renderTable() {
+  const tbl = $('#envTable');
+  tbl.querySelectorAll('tbody').forEach(t => t.remove());
+  let html = '', shown = 0;
+  for (const stage of STAGES) {
+    const all = ENVS.filter(e => e.stage === stage), rows = all.filter(visible);
+    if (!rows.length) continue;
+    const open = !state.collapsed.has(stage);
+    html += `<tbody data-stage="${stage}">${groupHTML(stage, all, rows.length)}${open ? rows.map(rowHTML).join('') : ''}</tbody>`;
+    shown += rows.length;
+  }
+  if (!shown) html = `<tbody><tr><td colspan="9" class="empty">No environment matches. <button data-reset="1">Show all</button></td></tr></tbody>`;
+  tbl.insertAdjacentHTML('beforeend', html);
+}
+
+const FOCUS_ATTRS = ['data-pin', 'data-toggle', 'data-filter', 'data-flag', 'data-assign', 'data-release', 'data-take', 'data-goto', 'data-collapse'];
+function focusKey() {
+  const el = document.activeElement;
+  if (!el || el === document.body) return null;
+  for (const a of FOCUS_ATTRS) if (el.hasAttribute(a)) {
+    const sel = `[${a}="${CSS.escape(el.getAttribute(a))}"]`;
+    return el.closest('#board') ? `#board ${sel}` : el.closest('#strip') ? `#strip ${sel}` : sel;
+  }
+  return null;
+}
+function render(focusSel) {
+  const k = focusSel || focusKey();
+  renderFilters(); renderBoard(); renderStrip(); renderTable(); renderStatusBar();
+  if (k) { const el = document.querySelector(k); if (el) el.focus({ preventScroll: true }); }
+  updateStick();
+}
+
+/* ---------- popover ---------- */
+const pop = $('#pop');
+let popKey = null;
+function placePop() {
+  const a = popKey && document.querySelector(popKey);
+  if (!a) return;
+  const r = a.getBoundingClientRect(), w = pop.offsetWidth, h = pop.offsetHeight;
+  const x = Math.max(8, Math.min(r.right - w, innerWidth - w - 8));
+  let y = r.bottom + 8;
+  if (y + h > innerHeight - 8) y = Math.max(8, r.top - h - 8);
+  pop.style.left = Math.round(x) + 'px';
+  pop.style.top = Math.round(y) + 'px';
+}
+function openPop(key, html) {
+  if (popKey === key && !pop.hidden) return closePop();
+  closePop(false);
+  popKey = key;
+  pop.innerHTML = html;
+  pop.hidden = false;
+  document.querySelector(key)?.setAttribute('aria-expanded', 'true');
+  placePop();
+  pop.querySelector('textarea, select, input, button:not([disabled])')?.focus();
+}
+function closePop(restore = true) {
+  if (pop.hidden) return;
+  pop.hidden = true;
+  const a = popKey && document.querySelector(popKey);
+  if (a) { if (a.hasAttribute('aria-expanded')) a.setAttribute('aria-expanded', 'false'); if (restore) a.focus(); }
+  popKey = null;
+}
+function takeHTML(e) {
+  return `<h3 id="popTitle">Take ${e.id} from ${esc(e.owner)}?</h3>
+    <p>${esc(e.owner)} owns ${e.id} at the moment. Taking it makes you the owner.</p>
+    <label for="takeUntil">Until</label>
+    <select class="field" id="takeUntil">
+      <option value="">No end time</option>
+      <option value="Tue 12:00">Tomorrow 12:00</option>
+      <option value="Tue 18:00">Tomorrow 18:00</option>
+      <option value="Fri 18:00">Friday 18:00</option>
+    </select>
+    <div class="pop-acts"><button class="btn primary" data-confirm-take="${e.id}">Take ${e.id}</button><button class="btn" data-pop-cancel="1">Cancel</button></div>`;
+}
+function flagHTML(e) {
+  if (e.override) {
+    const st = STATUS[e.override.type];
+    return `<h3 id="popTitle">${e.id} is flagged ${st.label.toLowerCase()}</h3>
+      <p>${esc(e.override.reason)}</p>
+      <p class="hint">${esc(person(e.override.by))}, ${esc(whenLong(D(e.override.at)))}</p>
+      <div class="pop-acts"><button class="btn" data-clear-flag="${e.id}">Clear flag</button><button class="btn" data-pop-cancel="1">Cancel</button></div>`;
+  }
+  return `<h3 id="popTitle">Flag ${e.id}</h3>
+    <label for="flagReason">Reason</label>
+    <textarea class="field" id="flagReason" rows="2" required placeholder="What's wrong, with a ticket if there is one"></textarea>
+    <p class="hint">Everyone sees it until someone clears the flag</p>
+    <div class="pop-acts">
+      <button class="btn s-unstable" data-set-flag="${e.id}:unstable" disabled>${icon('i-unstable')}Mark unstable</button>
+      <button class="btn s-unavail" data-set-flag="${e.id}:unavail" disabled>${icon('i-unavail')}Mark unavailable</button>
+    </div>`;
+}
+function platformHTML() {
+  const items = [
+    ['Build agents', 'All connected'],
+    ['Source control', 'Available'],
+    ['Unit tests 3/3', 'main #1412, release/4.11 #1405, release/4.10 #1291 passed'],
+    ['Contract checks 2/2', 'main #88, release/4.11 #31 passed'],
+  ];
+  return `<h3 id="popTitle">Platform</h3><ul class="plist">${items.map(([n, d]) =>
+    `<li class="s-ok">${icon('i-ok')}<span>${n}<small>${d}</small></span></li>`).join('')}</ul>`;
+}
+pop.addEventListener('input', ev => {
+  if (ev.target.id === 'flagReason') {
+    const ok = !!ev.target.value.trim();
+    pop.querySelectorAll('[data-set-flag]').forEach(b => { b.disabled = !ok; });
+  }
+});
+
+/* ---------- interactions ---------- */
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+function goto(id) {
+  const e = byId(id);
+  if (!visible(e)) { state.filter = 'all'; state.query = ''; $('#q').value = ''; }
+  state.collapsed.delete(e.stage);
+  render();
+  const row = document.getElementById('row-' + id);
+  if (!row) return;
+  row.scrollIntoView({ block: 'center', behavior: reduceMotion ? 'auto' : 'smooth' });
+  row.classList.remove('flash'); void row.offsetWidth; row.classList.add('flash');
+  setTimeout(() => row.classList.remove('flash'), 1700);
+  row.querySelector('.env')?.focus({ preventScroll: true });
+}
+function toggle(id, force) {
+  const open = force ?? !state.expanded.has(id);
+  open ? state.expanded.add(id) : state.expanded.delete(id);
+  render();
+}
+function collapse(stage) {
+  state.collapsed.has(stage) ? state.collapsed.delete(stage) : state.collapsed.add(stage);
+  render(`[data-collapse="${stage}"]`);
+}
+let toastTimer;
+function toast(msg) {
+  const t = $('#toast'); t.textContent = msg; t.hidden = false;
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, 2400);
+}
+async function copy(v) {
+  try { await navigator.clipboard.writeText(v); toast(`Copied ${v}`); }
+  catch { toast(`Couldn't copy ${v} in this browser`); }
+}
+
+document.addEventListener('click', ev => {
+  if (!pop.hidden && !pop.contains(ev.target) && !(popKey && ev.target.closest(popKey))) closePop(false);
+  const t = ev.target.closest('button, a[data-mock]');
+  if (!t) {
+    const g = ev.target.closest('tr.grp');
+    if (g) return collapse(g.dataset.stage);
+    const row = ev.target.closest('tr.row');
+    if (row && !String(getSelection()).trim()) toggle(row.dataset.env);
+    return;
+  }
+  const d = t.dataset;
+  if (d.mock) { ev.preventDefault(); toast(`Demo: ${d.mock}`); return; }
+  if (d.goto) return goto(d.goto);
+  if (d.collapse) return collapse(d.collapse);
+  if (d.filter) { state.filter = d.filter; return render(); }
+  if (d.reset) { state.filter = 'all'; state.query = ''; $('#q').value = ''; return render(); }
+  if (d.pin) {
+    state.pinned.has(d.pin) ? state.pinned.delete(d.pin) : state.pinned.add(d.pin);
+    store.set('pinned', [...state.pinned]);
+    toast(state.pinned.has(d.pin) ? `${d.pin} pinned` : `${d.pin} unpinned`);
+    return render();
+  }
+  if (d.toggle) return toggle(d.toggle);
+  if (d.assign) {
+    const e = byId(d.assign); if (e.owner) return;
+    e.owner = ME; e.until = null; e.prevOwner = null;
+    toast(`${e.id} is yours`);
+    return render(`[data-release="${e.id}"]`);
+  }
+  if (d.release) {
+    const e = byId(d.release); e.owner = null; e.until = null; e.prevOwner = null;
+    toast(`You released ${e.id}`);
+    return render(`[data-assign="${e.id}"]`);
+  }
+  if (d.take) return openPop(`[data-take="${d.take}"]`, takeHTML(byId(d.take)));
+  if (d.confirmTake) {
+    const e = byId(d.confirmTake), until = $('#takeUntil').value;
+    e.prevOwner = e.owner; e.owner = ME; e.until = until || null;
+    closePop(false);
+    toast(`You took ${e.id} from ${e.prevOwner}${until ? `, until ${until}` : ''}`);
+    return render(`[data-release="${e.id}"]`);
+  }
+  if (d.flag) return openPop(`[data-flag="${d.flag}"]`, flagHTML(byId(d.flag)));
+  if (d.setFlag) {
+    const [id, type] = d.setFlag.split(':');
+    const why = ($('#flagReason')?.value || '').trim();
+    if (!why) return;
+    byId(id).override = { type, by: ME, at: NOW_ISO, reason: why };
+    closePop();
+    toast(`${id} marked ${STATUS[type].label.toLowerCase()}`);
+    return render();
+  }
+  if (d.clearFlag) {
+    byId(d.clearFlag).override = null;
+    closePop();
+    toast(`Flag cleared on ${d.clearFlag}`);
+    return render(`[data-flag="${d.clearFlag}"]`);
+  }
+  if (d.popCancel) return closePop();
+  if (d.addNote) {
+    const text = (document.getElementById('note-' + d.addNote)?.value || '').trim();
+    if (!text) { toast('Write the note first'); return; }
+    byId(d.addNote).note = { text, by: ME, at: NOW_ISO };
+    return render();
+  }
+  if (d.clearNote) { byId(d.clearNote).note = null; return render(); }
+  if (d.copy) return copy(d.copy);
+});
+$('#platBtn').addEventListener('click', () => openPop('#platBtn', platformHTML()));
+
+$('#q').addEventListener('input', ev => { state.query = ev.target.value; render(); });
+document.addEventListener('keydown', ev => {
+  const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName);
+  if (ev.key === '/' && !typing) { ev.preventDefault(); $('#q').focus(); return; }
+  if (ev.key === 'Escape') {
+    hideTip();
+    if (!pop.hidden) { closePop(); return; }
+    if (document.activeElement === $('#q') && $('#q').value) { $('#q').value = ''; state.query = ''; render(); return; }
+    if (!$('#notes').hidden) closeNotes();
+  }
+  if (ev.key === 'Enter' && document.activeElement?.matches('input.field')) {
+    const id = document.activeElement.id;
+    if (id.startsWith('note-')) document.querySelector(`[data-add-note="${id.slice(5)}"]`)?.click();
+  }
+});
+
+/* tooltip: extra detail only, everything important is also in the page or the label */
+const tip = $('#tip'); let tipEl = null;
+function showTip(el) {
+  const text = el.getAttribute('data-tip'); if (!text) return;
+  tip.textContent = text; tip.hidden = false;
+  const r = el.getBoundingClientRect(), w = tip.offsetWidth, h = tip.offsetHeight;
+  const x = Math.max(8, Math.min(r.left + r.width / 2 - w / 2, innerWidth - w - 8));
+  let y = r.bottom + 8; if (y + h > innerHeight - 8) y = r.top - h - 8;
+  tip.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px)`;
+}
+function hideTip() { tip.hidden = true; tipEl = null; }
+document.addEventListener('mouseover', ev => {
+  const el = ev.target.closest('[data-tip]');
+  if (el === tipEl) return;
+  tipEl = el; el ? showTip(el) : hideTip();
+});
+document.addEventListener('focusin', ev => { const el = ev.target.closest('[data-tip]'); if (el && el.matches(':focus-visible')) { tipEl = el; showTip(el); } });
+document.addEventListener('focusout', hideTip);
+
+/* sticky header: the strip appears once the board has scrolled under it */
+const top = $('#top'), board = $('#board'), stripWrap = $('#stripWrap');
+function updateStick() {
+  const stuck = board.getBoundingClientRect().bottom < top.getBoundingClientRect().bottom;
+  top.classList.toggle('stuck', stuck);
+  const floating = getComputedStyle(stripWrap).position === 'absolute';
+  const h = top.offsetHeight + (stuck && floating ? stripWrap.offsetHeight : 0);
+  document.documentElement.style.setProperty('--sticky-top', h + 'px');
+}
+let raf = 0;
+addEventListener('scroll', () => { hideTip(); placePop(); cancelAnimationFrame(raf); raf = requestAnimationFrame(updateStick); }, { passive: true });
+addEventListener('resize', () => { closePop(false); updateStick(); });
+
+/* theme */
+const THEMES = ['auto', 'light', 'dark'];
+const THEME_ICON = { auto: 'i-auto', light: 'i-sun', dark: 'i-moon' };
+let theme = store.get('theme', 'auto');
+function applyTheme() {
+  if (theme === 'auto') document.documentElement.removeAttribute('data-theme');
+  else document.documentElement.setAttribute('data-theme', theme);
+  const b = $('#themeBtn');
+  b.innerHTML = icon(THEME_ICON[theme]);
+  b.setAttribute('aria-label', `Theme: ${theme}. Click to change`);
+  b.setAttribute('data-tip', `Theme: ${theme}`);
+}
+$('#themeBtn').addEventListener('click', () => {
+  theme = THEMES[(THEMES.indexOf(theme) + 1) % THEMES.length];
+  store.set('theme', theme); applyTheme();
+  if (tipEl === $('#themeBtn')) showTip(tipEl);
+});
+
+/* design notes drawer */
+function openNotes() { $('#notes').hidden = false; $('#notesBtn').setAttribute('aria-expanded', 'true'); $('#notesClose').focus(); }
+function closeNotes() { $('#notes').hidden = true; $('#notesBtn').setAttribute('aria-expanded', 'false'); $('#notesBtn').focus(); }
+$('#notesBtn').addEventListener('click', () => $('#notes').hidden ? openNotes() : closeNotes());
+$('#notesClose').addEventListener('click', closeNotes);
+
+applyTheme();
+render();
+})();
+</script>
+</body>
+</html>
